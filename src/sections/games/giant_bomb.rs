@@ -1,7 +1,8 @@
 use std::error::Error;
 use actix_web::http::header::HeaderValue;
-use reqwest::header;
+use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};
+use serde_json::Number;
 use time::{Date, Month};
 use time::macros::{format_description};
 use crate::sections::games::details::{GameDetails};
@@ -9,6 +10,7 @@ use crate::sections::games::details::{GameDetails};
 const BASE_URL: &str = "https://www.giantbomb.com/api";
 const API_KEY: &str = "410d35a4c4d3825c71b11fb1831ebb70512055cc";
 const USER_AGENT: HeaderValue = HeaderValue::from_static("whenly");
+const FIELDS: [&str; 6] = ["id", "name", "original_release_date", "expected_release_day", "expected_release_month", "expected_release_year"];
 
 #[derive(serde::Deserialize, Debug)]
 pub struct GetByIdResponse {
@@ -23,6 +25,8 @@ pub struct SearchResponse {
 impl Into<GameDetails> for BombResult {
     fn into(self) -> GameDetails {
         let results = self;
+        println!("{:?}", results);
+        let id = results.id.to_string();
         let name = results.name;
         let format = format_description!("[year]-[month]-[day]");
         let release_date = if let Some(date) = results.original_release_date {
@@ -32,11 +36,12 @@ impl Into<GameDetails> for BombResult {
             Date::from_calendar_date(year as i32, Month::try_from(month as u8).unwrap(), day as u8).ok()
         } else { None };
 
-        GameDetails::new(name, release_date)
+        GameDetails::new(id, name, release_date)
     }
 }
 #[derive(Deserialize, Serialize, Debug, Clone)]
 struct BombResult {
+    id: Number,
     name: String,
     expected_release_day: Option<u32>,
     expected_release_month: Option<u32>,
@@ -45,21 +50,12 @@ struct BombResult {
 }
 
 pub async fn get_game_by_id(id: &str) -> Result<GameDetails, Box<dyn Error>> {
-    let fields = ["name", "original_release_date", "expected_release_day", "expected_release_month", "expected_release_year"];
-    let mut headers = header::HeaderMap::new();
-    headers.insert("Accept", HeaderValue::from_static("application/json"));
-    headers.insert("User-Agent", USER_AGENT);
-
-    let client = reqwest::Client::builder()
-        .default_headers(headers)
-        .build().unwrap();
-
     let link = format!("{}/game/{}/?api_key={}&format=json&field_list={}",
-                       BASE_URL, id, API_KEY, fields.join(","));
+                       BASE_URL, id, API_KEY, FIELDS.join(","));
 
     println!("{}", link);
 
-    let details = client
+    let details = build_client()
         .get(link)
         .send()
         .await?
@@ -71,20 +67,13 @@ pub async fn get_game_by_id(id: &str) -> Result<GameDetails, Box<dyn Error>> {
     Ok(details)
 }
 
-pub async fn search_games(name: &str) -> Result<Vec<GameDetails>, Box<dyn Error>> {
-    let fields = ["name", "original_release_date", "expected_release_day", "expected_release_month", "expected_release_year"];
-    let mut headers = header::HeaderMap::new();
-    headers.insert("Accept", HeaderValue::from_static("application/json"));
-    headers.insert("User-Agent", USER_AGENT);
+pub async fn get_multiple_games_by_id(ids: Vec<&str>) -> Result<Vec<GameDetails>, Box<dyn Error>> {
+    let link = format!("{}/games/?api_key={}&format=json&field_list={}&filter=id:{}",
+                       BASE_URL, API_KEY, FIELDS.join(","), ids.join("|"));
 
-    let client = reqwest::Client::builder()
-        .default_headers(headers)
-        .build().unwrap();
+    println!("{}", link);
 
-    let link = format!("{}/search/?api_key={}&format=json&field_list={}&query={}&resources=game",
-                       BASE_URL, API_KEY, fields.join(","), name);
-
-    let details = client
+    let details = build_client()
         .get(link)
         .send()
         .await?
@@ -96,4 +85,33 @@ pub async fn search_games(name: &str) -> Result<Vec<GameDetails>, Box<dyn Error>
         .collect();
 
     Ok(details)
+}
+
+pub async fn search_games(name: &str) -> Result<Vec<GameDetails>, Box<dyn Error>> {
+    let link = format!("{}/search/?api_key={}&format=json&field_list={}&query={}&resources=game",
+                       BASE_URL, API_KEY, FIELDS.join(","), name);
+
+    let details = build_client()
+        .get(link)
+        .send()
+        .await?
+        .json::<SearchResponse>()
+        .await?
+        .results
+        .into_iter()
+        .map(|r| r.into())
+        .collect();
+
+    Ok(details)
+}
+
+fn build_client() -> Client {
+    let mut headers = header::HeaderMap::new();
+    headers.insert("Accept", HeaderValue::from_static("application/json"));
+    headers.insert("User-Agent", USER_AGENT);
+
+    Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap()
 }

@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Number;
 use time::{Date, Month};
 use time::macros::{format_description};
-use crate::sections::games::details::{GameDetails};
+use crate::details::{GameDetails};
+use crate::sections::games::repository::insert_from_giant_bomb;
 
 const BASE_URL: &str = "https://www.giantbomb.com/api";
 const API_KEY: &str = "410d35a4c4d3825c71b11fb1831ebb70512055cc";
@@ -63,6 +64,8 @@ pub async fn get_game_by_id(id: &str) -> Result<GameDetails, Box<dyn Error>> {
         .await?
         .results
         .into();
+
+    insert_from_giant_bomb(&details).expect("Failed updating db.");
 
     Ok(details)
 }
